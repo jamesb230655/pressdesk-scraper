@@ -1,96 +1,80 @@
-import { cleanText, inferBeats, extractTwitterHandle } from '../utils.js';
+import { cleanText, extractTwitterHandle, inferBeats } from '../utils.js'
 
 /**
- * Generic extractor — tries common patterns used by most CMS author pages.
- * Works reasonably well for WordPress, Ghost, and similar platforms.
- * Custom extractors override this for specific outlets.
+ * Generic extractor — quality-focused.
+ * Only saves contacts where we have at minimum: name + role or name + outlet.
  */
 export function genericExtractor($, outlet) {
-  const contacts = [];
+  const contacts = []
+  const seen = new Set()
 
-  // Common selectors used across most CMS author listing pages
-  const candidateSelectors = [
-    '.author',
-    '.author-card',
-    '.contributor',
-    '.team-member',
-    '.staff-member',
-    '[class*="author"]',
-    '[class*="contributor"]',
-    '[class*="journalist"]',
-    'article.author',
-  ];
+  function addContact(name, role, twitter, sourceUrl) {
+    const clean = cleanText(name)
+    if (!clean || clean.length < 4) return
+    if (seen.has(clean.toLowerCase())) return
+    if (/^\d|^(home|menu|search|subscribe|login|about|contact|advertise|cookie|privacy|terms)$/i.test(clean)) return
+    // Must look like a real name — at least 2 parts
+    const parts = clean.split(' ').filter(Boolean)
+    if (parts.length < 2) return
+    seen.add(clean.toLowerCase())
 
-  let found = false;
+    contacts.push({
+      full_name:      clean,
+      outlet:         outlet.name,
+      outlet_url:     outlet.url,
+      role:           cleanText(role) || null,
+      beat:           inferBeats(role || ''),
+      media_type:     outlet.category === 'broadcast' ? 'broadcast' : 'online',
+      twitter_handle: extractTwitterHandle(twitter),
+      source_url:     sourceUrl || outlet.masthead_url || outlet.url,
+      source_type:    'scraper',
+    })
+  }
 
-  for (const selector of candidateSelectors) {
-    const elements = $(selector);
-    if (elements.length < 2) continue; // skip if fewer than 2 matches — probably not the right selector
+  // Strategy 1: Structured author/team cards
+  const cardSelectors = [
+    { wrap: '.author-card, .contributor-card, .team-card, .staff-card, .journalist-card', name: 'h1,h2,h3,h4,.name,.author-name', role: '.role,.title,.job-title,.position' },
+    { wrap: '[class*="AuthorCard"], [class*="author-card"], [class*="StaffCard"]',         name: 'h2,h3,.name',                    role: '.role,.title,[class*="role"]' },
+    { wrap: '.team-member, .staff-member, .contributor',                                   name: 'h3,h4,.name',                    role: '.role,.title,.position' },
+    { wrap: 'article[class*="author"], div[class*="author-profile"]',                      name: 'h1,h2,h3',                       role: '.role,p:first-of-type' },
+  ]
 
-    found = true;
-
+  for (const { wrap, name: namesel, role: rolesel } of cardSelectors) {
+    const elements = $(wrap)
+    if (elements.length < 2) continue
     elements.each((_, el) => {
-      const $el = $(el);
-
-      const name = cleanText(
-        $el.find('h1, h2, h3, h4, .name, .author-name, [class*="name"]').first().text()
-      );
-
-      if (!name || name.length < 3) return; // skip if no usable name
-
-      const role = cleanText(
-        $el.find('.role, .title, .job-title, [class*="title"], [class*="role"]').first().text()
-      );
-
-      const bio = cleanText(
-        $el.find('p, .bio, .description, [class*="bio"]').first().text()
-      );
-
-      const twitter = extractTwitterHandle(
-        $el.find('a[href*="twitter.com"], a[href*="x.com"]').first().attr('href')
-      );
-
-      const beats = inferBeats(`${role || ''} ${bio || ''}`);
-
-      contacts.push({
-        full_name: name,
-        outlet: outlet.name,
-        outlet_url: outlet.url,
-        role,
-        beat: beats.length ? beats : (outlet.beats || []),
-        media_type: outlet.category === 'broadcast' ? 'broadcast' : 'online',
-        twitter_handle: twitter,
-        source_url: outlet.masthead_url || outlet.url,
-        source_type: 'scraper',
-      });
-    });
-
-    break; // stop after first selector that works
+      const $el     = $(el)
+      const name    = $el.find(namesel).first().text()
+      const role    = $el.find(rolesel).first().text()
+      const twitter = $el.find('a[href*="twitter.com"], a[href*="x.com"]').first().attr('href')
+      addContact(name, role, twitter, outlet.masthead_url)
+    })
+    if (contacts.length > 0) break
   }
 
-  // Last resort: scrape author bylines from article listings
-  if (!found) {
-    $('a[rel="author"], a[href*="/author/"], a[href*="/authors/"]').each((_, el) => {
-      const name = cleanText($(el).text());
-      if (!name || name.length < 3) return;
-
-      contacts.push({
-        full_name: name,
-        outlet: outlet.name,
-        outlet_url: outlet.url,
-        beat: outlet.beats || [],
-        media_type: 'online',
-        source_url: outlet.masthead_url || outlet.url,
-        source_type: 'scraper',
-      });
-    });
+  // Strategy 2: Schema.org Person markup
+  if (contacts.length === 0) {
+    $('[itemtype*="Person"], [itemtype*="schema.org/Person"]').each((_, el) => {
+      const $el  = $(el)
+      const name = $el.find('[itemprop="name"]').first().text()
+      const role = $el.find('[itemprop="jobTitle"]').first().text()
+      addContact(name, role, null, outlet.masthead_url)
+    })
   }
 
-  // Deduplicate by name
-  const seen = new Set();
-  return contacts.filter(c => {
-    if (seen.has(c.full_name)) return false;
-    seen.add(c.full_name);
-    return true;
-  });
+  // Strategy 3: Author byline links (last resort)
+  if (contacts.length === 0) {
+    const patterns = ['a[href*="/author/"]','a[href*="/authors/"]','a[href*="/journalist/"]','a[href*="/writer/"]','a[href*="/profile/"]','a[rel="author"]']
+    for (const pattern of patterns) {
+      $(pattern).each((_, el) => {
+        const name = cleanText($(el).text())
+        const href = $(el).attr('href') || ''
+        if (name && name.split(' ').length >= 2 && name.length < 60) {
+          addContact(name, null, null, href)
+        }
+      })
+    }
+  }
+
+  return contacts
 }
