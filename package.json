@@ -1,0 +1,21 @@
+{
+  "name": "pressdesk-scraper",
+  "version": "1.0.0",
+  "description": "Background scraper service for Pressdesk public contacts database",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "scrape:all": "node src/index.js --run-now",
+    "verify:all": "node src/verify.js --run-now"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "cheerio": "^1.0.0",
+    "node-cron": "^3.0.3",
+    "node-fetch": "^3.3.2",
+    "p-limit": "^5.0.0",
+    "dotenv": "^16.4.1"
+  }
+}
