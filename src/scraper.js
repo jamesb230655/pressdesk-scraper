@@ -47,13 +47,13 @@ async function enrichAndSave(rawContacts, outletDomain) {
       email:            email || null,
       email_status:     emailStatus,
       last_scraped_at:  new Date().toISOString(),
-      status:           'pending',
+      
     }
 
     // Only upsert if we have something meaningful
     const { error } = await supabase
       .from('public_contacts')
-      .upsert(record, { onConflict: 'full_name,outlet,email', ignoreDuplicates: false })
+      .upsert(record, { onConflict: 'full_name,outlet,email', ignoreDuplicates: true })
 
     if (error) {
       log(`⚠️  Save error for ${contact.full_name}: ${error.message}`)
