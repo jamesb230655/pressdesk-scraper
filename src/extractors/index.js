@@ -31,6 +31,7 @@ const EXTRACTORS = {
   timeout:     genericExtractor,
   olive:       genericExtractor,
   screendaily: genericExtractor,
+  generic:     genericExtractor,
 };
 
 export function getExtractor(key) {
